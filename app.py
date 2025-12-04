@@ -7,34 +7,45 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from openai import OpenAI
+import requests
 
 client = OpenAI()
 
-# Adjust this if your embeddings file is in a subfolder,
-# but from your logs it looks like it's right next to app.py.
+# ---------------------------------------------------------
+# Embeddings configuration
+# ---------------------------------------------------------
 
-import requests
-
+# Render-safe writable path
 EMBEDDINGS_FILE = Path("/opt/render/embeddings.jsonl")
 
-# Temporary fallback URL (from Dropbox, Drive, S3, etc.)
+# Temporary downloadable hosting (Dropbox link with ?dl=1)
 TEMP_EMBEDDINGS_URL = "https://www.dropbox.com/scl/fi/wh6476ycukexyfryvv0jz/embeddings.jsonl?rlkey=mek0tkdxa87yba4kmmrahk32g&dl=1"
 
-# If embeddings do not exist, download them
+# If embeddings do NOT exist, download automatically
 if not EMBEDDINGS_FILE.exists():
-    print("Embeddings not found — downloading...")
+    print("Embeddings not found — downloading from temporary URL...")
     r = requests.get(TEMP_EMBEDDINGS_URL)
     EMBEDDINGS_FILE.write_bytes(r.content)
     print("Downloaded embeddings to", EMBEDDINGS_FILE)
 
+# AFTER download attempt, confirm the file exists
+if not EMBEDDINGS_FILE.exists():
+    raise FileNotFoundError(
+        f"Embeddings file still not found after attempted download: {EMBEDDINGS_FILE}"
+    )
+
+# ---------------------------------------------------------
+# Model config
+# ---------------------------------------------------------
 EMBED_MODEL = "text-embedding-3-small"
 CHAT_MODEL = "gpt-4.1-mini"
 TOP_K = 6
 
 app = FastAPI(title="J Scott Multifamily Coaching Bot")
 
-
-# ---------- Load embeddings into memory ----------
+# ---------------------------------------------------------
+# Load embeddings
+# ---------------------------------------------------------
 
 def load_index(path: Path) -> Tuple[List[Dict], np.ndarray]:
     records = []
@@ -52,14 +63,11 @@ def load_index(path: Path) -> Tuple[List[Dict], np.ndarray]:
     print(f"Loaded {len(records)} chunks from {path}")
     return records, emb_matrix
 
-
-if not EMBEDDINGS_FILE.is_file():
-    raise FileNotFoundError(f"Embeddings file not found: {EMBEDDINGS_FILE}")
-
 RECORDS, EMB_MATRIX = load_index(EMBEDDINGS_FILE)
 
-
-# ---------- Core RAG helpers ----------
+# ---------------------------------------------------------
+# Core RAG Logic
+# ---------------------------------------------------------
 
 def embed_query(text: str) -> np.ndarray:
     resp = client.embeddings.create(
@@ -68,12 +76,10 @@ def embed_query(text: str) -> np.ndarray:
     )
     return np.array(resp.data[0].embedding, dtype=np.float32)
 
-
 def cosine_sim(query_vec: np.ndarray, emb_matrix: np.ndarray) -> np.ndarray:
     q = query_vec / np.linalg.norm(query_vec)
     m = emb_matrix / np.linalg.norm(emb_matrix, axis=1, keepdims=True)
     return m @ q
-
 
 def build_context(chosen_chunks: List[Dict]) -> str:
     parts = []
@@ -87,7 +93,6 @@ def build_context(chosen_chunks: List[Dict]) -> str:
         parts.append(rec["text"])
         parts.append("")  # blank line
     return "\n".join(parts)
-
 
 def answer_question(question: str, records: List[Dict], emb_matrix: np.ndarray) -> str:
     q_emb = embed_query(question)
@@ -129,22 +134,22 @@ Rules:
 
     return resp.choices[0].message.content.strip()
 
-
-# ---------- API models ----------
+# ---------------------------------------------------------
+# API Models
+# ---------------------------------------------------------
 
 class ChatRequest(BaseModel):
     question: str
 
-
 class ChatResponse(BaseModel):
     answer: str
 
-
-# ---------- Routes ----------
+# ---------------------------------------------------------
+# HTML UI
+# ---------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    # Simple HTML UI served directly by FastAPI, same origin as /chat
     html = """
 <!DOCTYPE html>
 <html>
@@ -207,10 +212,10 @@ def index():
         }
 
         const data = await res.json();
-        appendBot(data.answer || "(No answer field in response)");
+        appendBot(data.answer || "(No answer in response)");
       } catch (err) {
         console.error("Fetch error:", err);
-        appendBot("(Network error - see console for details)");
+        appendBot("(Network error - see console)");
       }
     });
   </script>
@@ -219,6 +224,9 @@ def index():
 """
     return HTMLResponse(content=html)
 
+# ---------------------------------------------------------
+# Chat Route
+# ---------------------------------------------------------
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
