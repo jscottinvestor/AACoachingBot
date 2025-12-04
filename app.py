@@ -1,5 +1,4 @@
 import json
-from fastapi import File, UploadFile
 from pathlib import Path
 from typing import List, Dict, Tuple
 
@@ -8,49 +7,39 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from openai import OpenAI
-import requests
 
+# -----------------------------
+# OpenAI Client
+# -----------------------------
 client = OpenAI()
 
-# ---------------------------------------------------------
-# Embeddings configuration
-# ---------------------------------------------------------
-
-# Render-safe writable path
-EMBEDDINGS_FILE = Path("/opt/render/embeddings.jsonl")
-
-# Temporary downloadable hosting (Dropbox link with ?dl=1)
-TEMP_EMBEDDINGS_URL = "https://www.dropbox.com/scl/fi/wh6476ycukexyfryvv0jz/embeddings.jsonl?rlkey=mek0tkdxa87yba4kmmrahk32g&dl=1"
-
-# If embeddings do NOT exist, download automatically
-if not EMBEDDINGS_FILE.exists():
-    print("Embeddings not found — downloading from temporary URL...")
-    r = requests.get(TEMP_EMBEDDINGS_URL)
-    EMBEDDINGS_FILE.write_bytes(r.content)
-    print("Downloaded embeddings to", EMBEDDINGS_FILE)
-
-# AFTER download attempt, confirm the file exists
-if not EMBEDDINGS_FILE.exists():
-    raise FileNotFoundError(
-        f"Embeddings file still not found after attempted download: {EMBEDDINGS_FILE}"
-    )
-
-# ---------------------------------------------------------
-# Model config
-# ---------------------------------------------------------
+# -----------------------------
+# Model Settings
+# -----------------------------
 EMBED_MODEL = "text-embedding-3-small"
 CHAT_MODEL = "gpt-4.1-mini"
 TOP_K = 6
 
-app = FastAPI(title="J Scott Multifamily Coaching Bot")
+# -----------------------------
+# Embeddings Path (Render Disk)
+# -----------------------------
+EMBEDDINGS_FILE = Path("/opt/data/embeddings.jsonl")
 
-# ---------------------------------------------------------
-# Load embeddings
-# ---------------------------------------------------------
+# -----------------------------
+# FastAPI App
+# -----------------------------
+app = FastAPI(title="Apartment Addicts Coaching Bot")
 
+# -----------------------------
+# Load Embeddings From Disk
+# -----------------------------
 def load_index(path: Path) -> Tuple[List[Dict], np.ndarray]:
+    if not path.exists():
+        raise FileNotFoundError(f"Embeddings file not found at: {path}")
+
     records = []
     embs = []
+
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             if not line.strip():
@@ -60,16 +49,18 @@ def load_index(path: Path) -> Tuple[List[Dict], np.ndarray]:
                 continue
             records.append(rec)
             embs.append(rec["embedding"])
+
     emb_matrix = np.array(embs, dtype=np.float32)
     print(f"Loaded {len(records)} chunks from {path}")
     return records, emb_matrix
 
+
+# Load at startup
 RECORDS, EMB_MATRIX = load_index(EMBEDDINGS_FILE)
 
-# ---------------------------------------------------------
-# Core RAG Logic
-# ---------------------------------------------------------
-
+# -----------------------------
+# Embedding + Retrieval Helpers
+# -----------------------------
 def embed_query(text: str) -> np.ndarray:
     resp = client.embeddings.create(
         model=EMBED_MODEL,
@@ -77,29 +68,37 @@ def embed_query(text: str) -> np.ndarray:
     )
     return np.array(resp.data[0].embedding, dtype=np.float32)
 
+
 def cosine_sim(query_vec: np.ndarray, emb_matrix: np.ndarray) -> np.ndarray:
     q = query_vec / np.linalg.norm(query_vec)
     m = emb_matrix / np.linalg.norm(emb_matrix, axis=1, keepdims=True)
     return m @ q
 
+
 def build_context(chosen_chunks: List[Dict]) -> str:
+    """Builds a nicely formatted context block for the LLM."""
     parts = []
     for rec in chosen_chunks:
         lesson_title = rec.get("lesson_title", "Unknown lesson")
         sec_idx = rec.get("section_index")
         t_start = rec.get("timestamp_start")
         t_end = rec.get("timestamp_end")
+
         header = f"[Lesson: {lesson_title} | Section: {sec_idx} | Time: {t_start}–{t_end}]"
         parts.append(header)
         parts.append(rec["text"])
         parts.append("")  # blank line
+
     return "\n".join(parts)
+
 
 def answer_question(question: str, records: List[Dict], emb_matrix: np.ndarray) -> str:
     q_emb = embed_query(question)
     sims = cosine_sim(q_emb, emb_matrix)
+
     top_idx = np.argsort(-sims)[:TOP_K]
     top_chunks = [records[i] for i in top_idx]
+
     context = build_context(top_chunks)
 
     system_prompt = """
@@ -135,22 +134,24 @@ Rules:
 
     return resp.choices[0].message.content.strip()
 
-# ---------------------------------------------------------
-# API Models
-# ---------------------------------------------------------
 
+# -----------------------------
+# API Models
+# -----------------------------
 class ChatRequest(BaseModel):
     question: str
+
 
 class ChatResponse(BaseModel):
     answer: str
 
-# ---------------------------------------------------------
-# HTML UI
-# ---------------------------------------------------------
 
+# -----------------------------
+# Routes
+# -----------------------------
 @app.get("/", response_class=HTMLResponse)
 def index():
+    """Simple built-in chat interface."""
     html = """
 <!DOCTYPE html>
 <html>
@@ -213,10 +214,10 @@ def index():
         }
 
         const data = await res.json();
-        appendBot(data.answer || "(No answer in response)");
+        appendBot(data.answer || "(No answer field in response)");
       } catch (err) {
         console.error("Fetch error:", err);
-        appendBot("(Network error - see console)");
+        appendBot("(Network error — see console for details)");
       }
     });
   </script>
@@ -225,16 +226,6 @@ def index():
 """
     return HTMLResponse(content=html)
 
-# ---------------------------------------------------------
-# Chat Route
-# ---------------------------------------------------------
-
-@app.post("/upload")
-async def upload_embeddings(file: UploadFile):
-    dest = Path("/opt/data/embeddings.jsonl")
-    content = await file.read()
-    dest.write_bytes(content)
-    return {"status": "ok", "bytes_written": len(content)}
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
