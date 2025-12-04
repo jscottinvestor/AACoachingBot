@@ -1,4 +1,5 @@
 import json
+from fastapi import File, UploadFile
 from pathlib import Path
 from typing import List, Dict, Tuple
 
@@ -227,6 +228,13 @@ def index():
 # ---------------------------------------------------------
 # Chat Route
 # ---------------------------------------------------------
+
+@app.post("/upload")
+async def upload_embeddings(file: UploadFile):
+    dest = Path("/opt/data/embeddings.jsonl")
+    content = await file.read()
+    dest.write_bytes(content)
+    return {"status": "ok", "bytes_written": len(content)}
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
