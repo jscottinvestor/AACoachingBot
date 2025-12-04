@@ -12,7 +12,21 @@ client = OpenAI()
 
 # Adjust this if your embeddings file is in a subfolder,
 # but from your logs it looks like it's right next to app.py.
-EMBEDDINGS_FILE = Path("embeddings.jsonl")
+
+import requests
+
+EMBEDDINGS_FILE = Path("/opt/render/embeddings.jsonl")
+
+# Temporary fallback URL (from Dropbox, Drive, S3, etc.)
+TEMP_EMBEDDINGS_URL = "https://www.dropbox.com/scl/fi/wh6476ycukexyfryvv0jz/embeddings.jsonl?rlkey=mek0tkdxa87yba4kmmrahk32g&dl=1"
+
+# If embeddings do not exist, download them
+if not EMBEDDINGS_FILE.exists():
+    print("Embeddings not found — downloading...")
+    r = requests.get(TEMP_EMBEDDINGS_URL)
+    EMBEDDINGS_FILE.write_bytes(r.content)
+    print("Downloaded embeddings to", EMBEDDINGS_FILE)
+
 EMBED_MODEL = "text-embedding-3-small"
 CHAT_MODEL = "gpt-4.1-mini"
 TOP_K = 6
