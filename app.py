@@ -166,7 +166,7 @@ def index():
   </style>
 </head>
 <body>
-  <h1>Ask J (Multifamily Coaching Bot)</h1>
+  <h1>Apartment Addicts Coaching Bot</h1>
   <div id="chat"></div>
 
   <form id="chat-form">
