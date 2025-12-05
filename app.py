@@ -151,8 +151,9 @@ Rules:
 - Explain concepts clearly and simply, like Ashley & J do when teaching.
 - Do NOT give legal, tax, or personalized investment advice.
 - Do NOT approve or reject specific deals. Instead, point students back to the frameworks.
-- If the context doesn't clearly cover the question, say so, and then give a general
-  educational answer, explicitly noting that it's general guidance.
+- If the course context and recent conversation do NOT clearly support an answer,
+  say explicitly that the question is not covered in the Apartment Addicts material
+  and that you do not want to guess. Do NOT fabricate or rely on outside knowledge.
 - When useful, mention the lesson name or topic you're drawing from.
 
 Formatting:
@@ -233,13 +234,18 @@ def index():
       overflow: hidden;
     }
     .chat-header {
-      padding: 16px 20px;
+      padding: 12px 20px;
       border-bottom: 1px solid #e5e7eb;
       display: flex;
       align-items: center;
       justify-content: space-between;
       background: linear-gradient(to right, #111827, #1f2937);
       color: #f9fafb;
+    }
+    .chat-header-left {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
     .chat-header-title {
       font-size: 18px;
@@ -249,12 +255,30 @@ def index():
       font-size: 12px;
       opacity: 0.8;
     }
+    .toggle-btn {
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(249, 250, 251, 0.3);
+      background: transparent;
+      color: #f9fafb;
+      cursor: pointer;
+    }
+    .toggle-btn:hover {
+      background: rgba(249, 250, 251, 0.1);
+    }
+
     #chat {
       padding: 16px 20px;
-      height: 560px;
+      height: 560px;              /* default height */
       overflow-y: auto;
       background: #f9fafb;
     }
+    /* Expanded mode: taller chat area */
+    .chat-wrapper.expanded #chat {
+      height: 80vh;
+    }
+
     .msg {
       margin-bottom: 16px;
       display: flex;
@@ -321,10 +345,20 @@ def index():
       margin-top: 0.35em;
       margin-bottom: 0.35em;
     }
+
     .chat-footer {
       border-top: 1px solid #e5e7eb;
-      padding: 12px 16px;
+      padding: 8px 16px 12px 16px;
       background: #f9fafb;
+    }
+    .typing {
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 6px;
+      min-height: 16px;
+    }
+    .typing.hidden {
+      display: none;
     }
     form {
       display: flex;
@@ -344,7 +378,7 @@ def index():
       border-color: #2563eb;
       box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35);
     }
-    button {
+    button[type="submit"] {
       padding: 9px 16px;
       border-radius: 999px;
       border: none;
@@ -357,10 +391,10 @@ def index():
       align-items: center;
       gap: 6px;
     }
-    button:hover {
+    button[type="submit"]:hover {
       background: #1d4ed8;
     }
-    button:disabled {
+    button[type="submit"]:disabled {
       opacity: 0.6;
       cursor: default;
     }
@@ -372,17 +406,19 @@ def index():
 </head>
 <body>
   <div class="page">
-    <div class="chat-wrapper">
+    <div class="chat-wrapper" id="chat-wrapper">
       <div class="chat-header">
-        <div>
+        <div class="chat-header-left">
           <div class="chat-header-title">Apartment Addicts Coaching Bot</div>
           <div class="chat-header-subtitle">Ask questions based on Ashley &amp; J's multifamily course content.</div>
         </div>
+        <button id="toggle-size-btn" type="button" class="toggle-btn">Expand</button>
       </div>
 
       <div id="chat"></div>
 
       <div class="chat-footer">
+        <div id="typing" class="typing hidden">AA Bot is thinking...</div>
         <form id="chat-form">
           <input id="question" type="text" placeholder="Ask a question..." autocomplete="off" />
           <button type="submit">
@@ -400,10 +436,26 @@ def index():
     const form = document.getElementById("chat-form");
     const input = document.getElementById("question");
     const chat = document.getElementById("chat");
-    const submitButton = form.querySelector("button");
+    const submitButton = form.querySelector('button[type="submit"]');
+    const typingEl = document.getElementById("typing");
+    const chatWrapper = document.getElementById("chat-wrapper");
+    const toggleSizeBtn = document.getElementById("toggle-size-btn");
 
     // In-browser conversation history (sent to backend each time)
     let history = [];
+    let expanded = false;
+
+    // Toggle expand/collapse of chat height
+    toggleSizeBtn.addEventListener("click", () => {
+      expanded = !expanded;
+      if (expanded) {
+        chatWrapper.classList.add("expanded");
+        toggleSizeBtn.textContent = "Collapse";
+      } else {
+        chatWrapper.classList.remove("expanded");
+        toggleSizeBtn.textContent = "Expand";
+      }
+    });
 
     function appendUser(msg) {
       const wrapper = document.createElement("div");
@@ -420,7 +472,9 @@ def index():
       wrapper.appendChild(bubble);
       wrapper.appendChild(avatar);
       chat.appendChild(wrapper);
-      chat.scrollTop = chat.scrollHeight;
+
+      // Scroll so this message is visible near the top of the viewport
+      wrapper.scrollIntoView({ behavior: "smooth", block: "start" });
 
       // record in history
       history.push({ role: "user", content: msg });
@@ -443,7 +497,9 @@ def index():
       wrapper.appendChild(avatar);
       wrapper.appendChild(bubble);
       chat.appendChild(wrapper);
-      chat.scrollTop = chat.scrollHeight;
+
+      // Scroll so the *start* of this answer is visible
+      wrapper.scrollIntoView({ behavior: "smooth", block: "start" });
 
       // record in history
       history.push({ role: "assistant", content: msg });
@@ -452,11 +508,12 @@ def index():
     async function sendQuestion(q) {
       try {
         submitButton.disabled = true;
+        typingEl.classList.remove("hidden");
 
         const res = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
+          body: JSON.stringify({
             question: q,
             history: history
           }),
@@ -476,6 +533,7 @@ def index():
         appendBot("(Network error — see console for details)");
       } finally {
         submitButton.disabled = false;
+        typingEl.classList.add("hidden");
       }
     }
 
