@@ -1,10 +1,11 @@
 import json
 import datetime
+import os
 from pathlib import Path
 from typing import List, Dict, Tuple
 
 import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from openai import OpenAI
@@ -26,6 +27,11 @@ TOP_K = 6
 # -----------------------------
 EMBEDDINGS_FILE = Path("/opt/data/embeddings.jsonl")
 LOG_PATH = Path("/opt/data/chat_logs.jsonl")
+
+# -----------------------------
+# Password Protection
+# -----------------------------
+BOT_PASSWORD = os.getenv("AA_BOT_PASSWORD")  # set this in Render env vars
 
 # -----------------------------
 # FastAPI App
@@ -120,6 +126,20 @@ def answer_question(
     top_idx = np.argsort(-sims)[:TOP_K]
     top_chunks = [records[i] for i in top_idx]
 
+    # --- Relevance check: don't answer if not in course material ---
+    max_sim = float(sims[top_idx[0]]) if len(top_idx) > 0 else -1.0
+    RELEVANCE_THRESHOLD = 0.28  # tune this if needed
+
+    if max_sim < RELEVANCE_THRESHOLD:
+        return (
+            "I’m not seeing anything in the Apartment Addicts course transcripts that "
+            "directly answers this question.\n\n"
+            "This coaching bot is intentionally limited to the course material, so I don’t "
+            "want to guess or make something up. Please bring this question to a live "
+            "coaching call or the community so Ashley & J can address it directly."
+        )
+    # ---------------------------------------------------------------
+
     context = build_context(top_chunks)
 
     # Build compact recent chat history text for the prompt
@@ -147,7 +167,7 @@ You are trained on Ashley & J's multifamily course transcripts. Your job is to h
 understand and apply the material.
 
 Rules:
-- Base your answers primarily on the provided course context.
+- Base your answers strictly on the provided course context.
 - Explain concepts clearly and simply, like Ashley & J do when teaching.
 - Do NOT give legal, tax, or personalized investment advice.
 - Do NOT approve or reject specific deals. Instead, point students back to the frameworks.
@@ -187,6 +207,7 @@ Formatting:
 class ChatRequest(BaseModel):
     question: str
     history: List[Dict[str, str]] | None = None
+    password: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -198,7 +219,7 @@ class ChatResponse(BaseModel):
 # -----------------------------
 @app.get("/", response_class=HTMLResponse)
 def index():
-    """ChatGPT-style built-in chat interface with conversation history."""
+    """ChatGPT-style built-in chat interface with conversation history + password."""
     html = """
 <!DOCTYPE html>
 <html>
@@ -360,6 +381,32 @@ def index():
     .typing.hidden {
       display: none;
     }
+    .password-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: #4b5563;
+    }
+    #password {
+      flex: 0 0 180px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      font-size: 12px;
+      outline: none;
+      background: #ffffff;
+    }
+    #password:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35);
+    }
+    .password-status {
+      font-size: 12px;
+      color: #b91c1c;
+    }
+
     form {
       display: flex;
       gap: 8px;
@@ -418,6 +465,11 @@ def index():
       <div id="chat"></div>
 
       <div class="chat-footer">
+        <div class="password-row">
+          <span>Enter access password:</span>
+          <input id="password" type="password" placeholder="Password" autocomplete="off" />
+          <span id="password-status" class="password-status"></span>
+        </div>
         <div id="typing" class="typing hidden">AA Bot is thinking...</div>
         <form id="chat-form">
           <input id="question" type="text" placeholder="Ask a question..." autocomplete="off" />
@@ -440,10 +492,13 @@ def index():
     const typingEl = document.getElementById("typing");
     const chatWrapper = document.getElementById("chat-wrapper");
     const toggleSizeBtn = document.getElementById("toggle-size-btn");
+    const passwordInput = document.getElementById("password");
+    const passwordStatus = document.getElementById("password-status");
 
     // In-browser conversation history (sent to backend each time)
     let history = [];
     let expanded = false;
+    let botPassword = "";
 
     // Toggle expand/collapse of chat height
     toggleSizeBtn.addEventListener("click", () => {
@@ -509,15 +564,30 @@ def index():
       try {
         submitButton.disabled = true;
         typingEl.classList.remove("hidden");
+        passwordStatus.textContent = "";
+
+        if (!botPassword) {
+          botPassword = passwordInput.value.trim();
+        }
 
         const res = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             question: q,
-            history: history
+            history: history,
+            password: botPassword
           }),
         });
+
+        if (res.status === 401) {
+          // Unauthorized: wrong or missing password
+          passwordStatus.textContent = "Incorrect password.";
+          botPassword = "";
+          typingEl.classList.add("hidden");
+          submitButton.disabled = false;
+          return;
+        }
 
         if (!res.ok) {
           const text = await res.text();
@@ -542,6 +612,12 @@ def index():
       const q = input.value.trim();
       if (!q) return;
 
+      // require a password before first question
+      if (!botPassword && !passwordInput.value.trim()) {
+        passwordStatus.textContent = "Please enter the access password first.";
+        return;
+      }
+
       appendUser(q);
       input.value = "";
       await sendQuestion(q);
@@ -555,6 +631,11 @@ def index():
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
+    # Enforce password on backend (real protection)
+    if BOT_PASSWORD:
+        if not req.password or req.password != BOT_PASSWORD:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
     answer = answer_question(
         req.question,
         RECORDS,
