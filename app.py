@@ -102,19 +102,24 @@ def answer_question(question: str, records: List[Dict], emb_matrix: np.ndarray) 
     context = build_context(top_chunks)
 
     system_prompt = """
-You are J Scott's multifamily investing coaching assistant.
+You are the Apartment Addicts multifamily investing coaching assistant.
 
-You are trained on J's multifamily course transcripts. Your job is to help students
+You are trained on Ashley & J's multifamily course transcripts. Your job is to help students
 understand and apply the material.
 
 Rules:
 - Base your answers primarily on the provided course context.
-- Explain concepts clearly and simply, like J does when teaching.
+- Explain concepts clearly and simply, like Ashley & J do when teaching.
 - Do NOT give legal, tax, or personalized investment advice.
 - Do NOT approve or reject specific deals. Instead, point students back to the frameworks.
 - If the context doesn't clearly cover the question, say so, and then give a general
   educational answer, explicitly noting that it's general guidance.
 - When useful, mention the lesson name or topic you're drawing from.
+
+Formatting:
+- Format all answers in clear, readable Markdown.
+- Use headings, bullet points, numbered lists, and short paragraphs where helpful.
+- Do NOT wrap the entire answer in a single code block or triple backticks.
 """.strip()
 
     user_content = (
@@ -157,13 +162,16 @@ def index():
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>J Scott Coaching Bot</title>
+  <title>Apartment Addicts Coaching Bot</title>
   <style>
     body { font-family: sans-serif; max-width: 800px; margin: 40px auto; }
     #chat { border: 1px solid #ccc; padding: 16px; height: 400px; overflow-y: auto; }
     .msg-user { font-weight: bold; margin-top: 8px; }
-    .msg-bot { margin-left: 12px; margin-bottom: 8px; }
+    .msg-bot { margin-left: 12px; margin-bottom: 8px; 
+    }
+
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
   <h1>Apartment Addicts Coaching Bot</h1>
@@ -186,10 +194,12 @@ def index():
       chat.scrollTop = chat.scrollHeight;
     }
 
-    function appendBot(msg) {
-      chat.innerHTML += `<div class="msg-bot">Bot: ${msg}</div>`;
-      chat.scrollTop = chat.scrollHeight;
-    }
+function appendBot(msg) {
+  // Convert Markdown from the bot into HTML
+  const html = marked.parse(msg);
+  chat.innerHTML += `<div class="msg-bot">Bot:<br>${html}</div>`;
+  chat.scrollTop = chat.scrollHeight;
+}
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
