@@ -1,4 +1,5 @@
 import json
+import datetime
 from pathlib import Path
 from typing import List, Dict, Tuple
 
@@ -21,9 +22,10 @@ CHAT_MODEL = "gpt-4.1-mini"
 TOP_K = 6
 
 # -----------------------------
-# Embeddings Path (Render Disk)
+# Paths on Render Disk
 # -----------------------------
 EMBEDDINGS_FILE = Path("/opt/data/embeddings.jsonl")
+LOG_PATH = Path("/opt/data/chat_logs.jsonl")
 
 # -----------------------------
 # FastAPI App
@@ -55,8 +57,21 @@ def load_index(path: Path) -> Tuple[List[Dict], np.ndarray]:
     return records, emb_matrix
 
 
-# Load at startup
 RECORDS, EMB_MATRIX = load_index(EMBEDDINGS_FILE)
+
+# -----------------------------
+# Simple Logging Helper
+# -----------------------------
+def log_interaction(question: str, answer: str, history: List[Dict[str, str]] | None = None):
+    record = {
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "question": question,
+        "answer": answer,
+        "history": history or [],
+    }
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
 
 # -----------------------------
 # Embedding + Retrieval Helpers
@@ -92,7 +107,13 @@ def build_context(chosen_chunks: List[Dict]) -> str:
     return "\n".join(parts)
 
 
-def answer_question(question: str, records: List[Dict], emb_matrix: np.ndarray) -> str:
+def answer_question(
+    question: str,
+    records: List[Dict],
+    emb_matrix: np.ndarray,
+    history: List[Dict[str, str]] | None = None,
+) -> str:
+    # Embed the current question
     q_emb = embed_query(question)
     sims = cosine_sim(q_emb, emb_matrix)
 
@@ -100,6 +121,24 @@ def answer_question(question: str, records: List[Dict], emb_matrix: np.ndarray) 
     top_chunks = [records[i] for i in top_idx]
 
     context = build_context(top_chunks)
+
+    # Build compact recent chat history text for the prompt
+    history_text = ""
+    if history:
+        trimmed = history[-6:]  # last few turns only
+        convo_lines = []
+        for turn in trimmed:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            if not content:
+                continue
+            who = "Student" if role == "user" else "Assistant"
+            convo_lines.append(f"{who}: {content}")
+        if convo_lines:
+            history_text = (
+                "Here is the recent conversation between the student and the assistant:\n"
+                + "\n".join(convo_lines)
+            )
 
     system_prompt = """
 You are the Apartment Addicts multifamily investing coaching assistant.
@@ -125,7 +164,8 @@ Formatting:
     user_content = (
         "Use ONLY the following course context as your primary source:\n\n"
         f"{context}\n\n"
-        f"Now answer this question from a student:\n\n{question}"
+        f"{history_text}\n\n"
+        f"Now answer this question from the student:\n\n{question}"
     )
 
     resp = client.chat.completions.create(
@@ -145,6 +185,7 @@ Formatting:
 # -----------------------------
 class ChatRequest(BaseModel):
     question: str
+    history: List[Dict[str, str]] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -156,7 +197,7 @@ class ChatResponse(BaseModel):
 # -----------------------------
 @app.get("/", response_class=HTMLResponse)
 def index():
-    """ChatGPT-style built-in chat interface."""
+    """ChatGPT-style built-in chat interface with conversation history."""
     html = """
 <!DOCTYPE html>
 <html>
@@ -335,7 +376,7 @@ def index():
       <div class="chat-header">
         <div>
           <div class="chat-header-title">Apartment Addicts Coaching Bot</div>
-          <div class="chat-header-subtitle">Ask questions based on Ashley & J's multifamily course content.</div>
+          <div class="chat-header-subtitle">Ask questions based on Ashley &amp; J's multifamily course content.</div>
         </div>
       </div>
 
@@ -361,6 +402,9 @@ def index():
     const chat = document.getElementById("chat");
     const submitButton = form.querySelector("button");
 
+    // In-browser conversation history (sent to backend each time)
+    let history = [];
+
     function appendUser(msg) {
       const wrapper = document.createElement("div");
       wrapper.className = "msg msg-user";
@@ -377,6 +421,9 @@ def index():
       wrapper.appendChild(avatar);
       chat.appendChild(wrapper);
       chat.scrollTop = chat.scrollHeight;
+
+      // record in history
+      history.push({ role: "user", content: msg });
     }
 
     function appendBot(msg) {
@@ -390,7 +437,6 @@ def index():
       const bubble = document.createElement("div");
       bubble.className = "bubble bubble-bot";
 
-      // Render Markdown from the bot into HTML
       const html = marked.parse(msg);
       bubble.innerHTML = html;
 
@@ -398,6 +444,9 @@ def index():
       wrapper.appendChild(bubble);
       chat.appendChild(wrapper);
       chat.scrollTop = chat.scrollHeight;
+
+      // record in history
+      history.push({ role: "assistant", content: msg });
     }
 
     async function sendQuestion(q) {
@@ -407,7 +456,10 @@ def index():
         const res = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: q }),
+          body: JSON.stringify({ 
+            question: q,
+            history: history
+          }),
         });
 
         if (!res.ok) {
@@ -445,5 +497,12 @@ def index():
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    answer = answer_question(req.question, RECORDS, EMB_MATRIX)
+    answer = answer_question(
+        req.question,
+        RECORDS,
+        EMB_MATRIX,
+        history=req.history or [],
+    )
+    # log after answer is generated
+    log_interaction(req.question, answer, history=req.history or [])
     return ChatResponse(answer=answer)
