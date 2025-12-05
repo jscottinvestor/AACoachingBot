@@ -156,7 +156,7 @@ class ChatResponse(BaseModel):
 # -----------------------------
 @app.get("/", response_class=HTMLResponse)
 def index():
-    """Simple built-in chat interface."""
+    """ChatGPT-style built-in chat interface."""
     html = """
 <!DOCTYPE html>
 <html>
@@ -164,43 +164,194 @@ def index():
   <meta charset="utf-8" />
   <title>Apartment Addicts Coaching Bot</title>
   <style>
-    body { font-family: sans-serif; max-width: 800px; margin: 40px auto; }
-    #chat { border: 1px solid #ccc; padding: 16px; height: 400px; overflow-y: auto; }
-    .msg-user { font-weight: bold; margin-top: 8px; }
-
-.msg-bot {
-    margin-top: 24px;    /* extra space before bot message */
-    display: flex;
-    align-items: flex-start;
-}
-
-.msg-bot-label {
-    font-weight: 600;
-    margin-right: 8px;
-    flex-shrink: 0;
-}
-
-.msg-bot-bubble {
-    background: #f3f4f6;
-    padding: 8px 12px;
-    border-radius: 8px;
-    display: inline-block;
-    max-width: 100%;
-}
-}
-
-
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+    }
+    .page {
+      min-height: 100vh;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 24px;
+    }
+    .chat-wrapper {
+      width: 100%;
+      max-width: 960px;
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .chat-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(to right, #111827, #1f2937);
+      color: #f9fafb;
+    }
+    .chat-header-title {
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .chat-header-subtitle {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+    #chat {
+      padding: 16px 20px;
+      height: 560px;
+      overflow-y: auto;
+      background: #f9fafb;
+    }
+    .msg {
+      margin-bottom: 16px;
+      display: flex;
+      gap: 10px;
+    }
+    .msg-user {
+      justify-content: flex-end;
+    }
+    .msg-bot {
+      justify-content: flex-start;
+    }
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .avatar-user {
+      background: #2563eb;
+      color: #ffffff;
+    }
+    .avatar-bot {
+      background: #10b981;
+      color: #ffffff;
+    }
+    .bubble {
+      max-width: 80%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+      background: #ffffff;
+      color: #111827;
+      white-space: normal;
+    }
+    .bubble-user {
+      background: #2563eb;
+      color: #f9fafb;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble-bot {
+      background: #ffffff;
+      color: #111827;
+      border-bottom-left-radius: 4px;
+    }
+    .bubble-bot h1,
+    .bubble-bot h2,
+    .bubble-bot h3 {
+      margin-top: 0.5em;
+      margin-bottom: 0.35em;
+    }
+    .bubble-bot ul,
+    .bubble-bot ol {
+      margin-top: 0.35em;
+      margin-bottom: 0.35em;
+      padding-left: 1.25em;
+    }
+    .bubble-bot p {
+      margin-top: 0.35em;
+      margin-bottom: 0.35em;
+    }
+    .chat-footer {
+      border-top: 1px solid #e5e7eb;
+      padding: 12px 16px;
+      background: #f9fafb;
+    }
+    form {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    #question {
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      font-size: 14px;
+      outline: none;
+      background: #ffffff;
+    }
+    #question:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35);
+    }
+    button {
+      padding: 9px 16px;
+      border-radius: 999px;
+      border: none;
+      background: #2563eb;
+      color: white;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    button:hover {
+      background: #1d4ed8;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .send-icon {
+      font-size: 14px;
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
-  <h1>Apartment Addicts Coaching Bot</h1>
-  <div id="chat"></div>
+  <div class="page">
+    <div class="chat-wrapper">
+      <div class="chat-header">
+        <div>
+          <div class="chat-header-title">Apartment Addicts Coaching Bot</div>
+          <div class="chat-header-subtitle">Ask questions based on Ashley & J's multifamily course content.</div>
+        </div>
+      </div>
 
-  <form id="chat-form">
-    <input id="question" type="text" placeholder="Ask a question..." style="width: 75%;" />
-    <button type="submit">Send</button>
-  </form>
+      <div id="chat"></div>
+
+      <div class="chat-footer">
+        <form id="chat-form">
+          <input id="question" type="text" placeholder="Ask a question..." autocomplete="off" />
+          <button type="submit">
+            Send
+            <span class="send-icon">➤</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
 
   <script>
     const API_URL = "/chat";
@@ -208,28 +359,51 @@ def index():
     const form = document.getElementById("chat-form");
     const input = document.getElementById("question");
     const chat = document.getElementById("chat");
+    const submitButton = form.querySelector("button");
 
     function appendUser(msg) {
-      chat.innerHTML += `<div class="msg-user">You: ${msg}</div>`;
+      const wrapper = document.createElement("div");
+      wrapper.className = "msg msg-user";
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble bubble-user";
+      bubble.textContent = msg;
+
+      const avatar = document.createElement("div");
+      avatar.className = "avatar avatar-user";
+      avatar.textContent = "You";
+
+      wrapper.appendChild(bubble);
+      wrapper.appendChild(avatar);
+      chat.appendChild(wrapper);
       chat.scrollTop = chat.scrollHeight;
     }
 
-function appendBot(msg) {
-  // Convert Markdown from the bot into HTML
-  const html = marked.parse(msg);
-  chat.innerHTML += `<div class="msg-bot">AA Coaching Bot:<br>${html}</div>`;
-  chat.scrollTop = chat.scrollHeight;
-}
+    function appendBot(msg) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "msg msg-bot";
 
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const q = input.value.trim();
-      if (!q) return;
+      const avatar = document.createElement("div");
+      avatar.className = "avatar avatar-bot";
+      avatar.textContent = "AA";
 
-      appendUser(q);
-      input.value = "";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble bubble-bot";
 
+      // Render Markdown from the bot into HTML
+      const html = marked.parse(msg);
+      bubble.innerHTML = html;
+
+      wrapper.appendChild(avatar);
+      wrapper.appendChild(bubble);
+      chat.appendChild(wrapper);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function sendQuestion(q) {
       try {
+        submitButton.disabled = true;
+
         const res = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -248,7 +422,19 @@ function appendBot(msg) {
       } catch (err) {
         console.error("Fetch error:", err);
         appendBot("(Network error — see console for details)");
+      } finally {
+        submitButton.disabled = false;
       }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const q = input.value.trim();
+      if (!q) return;
+
+      appendUser(q);
+      input.value = "";
+      await sendQuestion(q);
     });
   </script>
 </body>
