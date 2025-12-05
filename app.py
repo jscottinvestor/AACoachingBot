@@ -167,8 +167,28 @@ def index():
     body { font-family: sans-serif; max-width: 800px; margin: 40px auto; }
     #chat { border: 1px solid #ccc; padding: 16px; height: 400px; overflow-y: auto; }
     .msg-user { font-weight: bold; margin-top: 8px; }
-    .msg-bot { margin-left: 12px; margin-bottom: 8px; 
-    }
+
+.msg-bot {
+    margin-top: 24px;    /* extra space before bot message */
+    display: flex;
+    align-items: flex-start;
+}
+
+.msg-bot-label {
+    font-weight: 600;
+    margin-right: 8px;
+    flex-shrink: 0;
+}
+
+.msg-bot-bubble {
+    background: #f3f4f6;
+    padding: 8px 12px;
+    border-radius: 8px;
+    display: inline-block;
+    max-width: 100%;
+}
+}
+
 
   </style>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -197,7 +217,7 @@ def index():
 function appendBot(msg) {
   // Convert Markdown from the bot into HTML
   const html = marked.parse(msg);
-  chat.innerHTML += `<div class="msg-bot">Bot:<br>${html}</div>`;
+  chat.innerHTML += `<div class="msg-bot">AA Coaching Bot:<br>${html}</div>`;
   chat.scrollTop = chat.scrollHeight;
 }
 
